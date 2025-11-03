@@ -1,61 +1,72 @@
-# src/clean_news.py
 """
 clean_news.py
-Cleans and preprocesses the raw news data collected in Step 1.
-Saves output: data/clean_news.csv
+Robust cleaning pipeline for:
+C:\\WASH_Cholera_2024_Outbreak_Project\\data\\news_articles.csv
+
+Output: clean_news.csv (replaces existing file)
+Removes duplicates, non-relevant text, punctuation, stopwords,
+and normalizes casing for consistency.
 """
 
 import os
-import pandas as pd
 import re
+import pandas as pd
+import nltk
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
 
+# Ensure NLTK dependencies are available
+nltk.download("punkt", quiet=True)
+nltk.download("stopwords", quiet=True)
+
+# === Paths ===
 BASE_DIR = r"C:\WASH_Cholera_2024_Outbreak_Project"
-RAW_PATH = os.path.join(BASE_DIR, "data", "news_articles.csv")
-CLEAN_PATH = os.path.join(BASE_DIR, "data", "clean_news.csv")
+INPUT_CSV = os.path.join(BASE_DIR, "data", "news_articles.csv")
+OUTPUT_CSV = os.path.join(BASE_DIR, "data", "clean_news.csv")
+
+# === Load raw data ===
+print("🔍 Loading data...")
+df = pd.read_csv(INPUT_CSV, encoding="utf-8-sig")
+print(f"✅ Loaded {len(df)} rows")
+
+# === Basic structure checks ===
+expected_cols = ["title", "link", "published", "summary", "source", "query"]
+missing_cols = [c for c in expected_cols if c not in df.columns]
+if missing_cols:
+    raise ValueError(f"Missing expected columns: {missing_cols}")
+
+# === Deduplication ===
+print("🧹 Removing duplicates...")
+df.drop_duplicates(subset=["title", "link"], inplace=True)
+
+# === Combine text fields for cleaning ===
+print("🧩 Combining text fields...")
+df["text"] = (df["title"].fillna("") + " " + df["summary"].fillna("")).str.strip()
+
+# === Drop rows with empty text ===
+df = df[df["text"].str.len() > 20]  # remove too-short or empty entries
+
+# === Define text cleaning function ===
+stop_words = set(stopwords.words("english"))
 
 def clean_text(text):
-    """Lowercase, remove URLs, punctuation, and extra whitespace."""
-    if not isinstance(text, str):
-        return ""
-    text = text.lower()
-    text = re.sub(r"http\S+", "", text)  # remove links
-    text = re.sub(r"[^a-z0-9\s.,!?]", "", text)  # keep alphanumerics + basic punctuation
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+    text = str(text).lower()
+    text = re.sub(r"http\S+|www\S+", "", text)  # remove URLs
+    text = re.sub(r"[^a-z\s]", " ", text)       # keep only letters and spaces
+    text = re.sub(r"\s+", " ", text).strip()    # normalize spaces
+    words = word_tokenize(text)
+    words = [w for w in words if w not in stop_words and len(w) > 2]
+    return " ".join(words)
 
-def main():
-    if not os.path.exists(RAW_PATH):
-        print(f"❌ Raw file not found: {RAW_PATH}")
-        return
+# === Apply cleaning ===
+print("🧽 Cleaning text fields (this may take a while)...")
+df["clean_text"] = df["text"].apply(clean_text)
 
-    df = pd.read_csv(RAW_PATH)
+# === Final validation ===
+df = df[df["clean_text"].str.len() > 20]  # remove any residual short text
+df.reset_index(drop=True, inplace=True)
 
-    print(f"✅ Loaded {len(df)} rows from {RAW_PATH}")
-
-    # Keep only relevant columns
-    keep_cols = ["title", "summary", "source", "published", "query", "link"]
-    df = df[[c for c in keep_cols if c in df.columns]]
-
-    # Drop rows missing title and summary
-    df = df.dropna(subset=["title", "summary"], how="all")
-
-    # Clean text
-    df["title_clean"] = df["title"].apply(clean_text)
-    df["summary_clean"] = df["summary"].apply(clean_text)
-
-    # Merge for analysis
-    df["text"] = df["title_clean"] + ". " + df["summary_clean"]
-
-    # Drop duplicates based on cleaned text
-    df = df.drop_duplicates(subset=["text"])
-
-    # Remove empty text
-    df = df[df["text"].str.strip() != ""]
-
-    print(f"🧹 Cleaned dataset contains {len(df)} unique usable articles")
-
-    df.to_csv(CLEAN_PATH, index=False, encoding="utf-8-sig")
-    print(f"💾 Saved cleaned file to: {CLEAN_PATH}")
-
-if __name__ == "__main__":
-    main()
+# === Save cleaned data ===
+df.to_csv(OUTPUT_CSV, index=False, encoding="utf-8-sig")
+print(f"✅ Cleaned data saved: {OUTPUT_CSV}")
+print(f"📊 Final record count: {len(df)}")
